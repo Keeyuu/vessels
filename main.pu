@@ -1,0 +1,22 @@
+@startuml
+
+
+paytest->paysdk :初始化endpoint url \n 和 appname
+
+paysdk->paysdk:初始化endpoint和最终调用对象路由
+
+paytest->paysdk: 调用placeOrder 
+
+paysdk->paygateway:调用对象的方法用http转到gateway
+
+paygateway->paygateway:校验签名
+
+paygateway->payservice:最终调用rpc对象
+
+payservice->paygateway
+
+paygateway->paysdk
+
+paysdk->paytest
+
+@enduml
