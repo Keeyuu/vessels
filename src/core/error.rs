@@ -19,9 +19,9 @@ impl ErrorKind {
 }
 
 impl Error {
-    pub fn new(msg: &'static str) -> Self {
+    pub fn new(msg: String) -> Self {
         Error {
-            msg: String::from(msg),
+            msg,
             kind: String::from(ErrorKind::Vessels.to_string()),
         }
     }
