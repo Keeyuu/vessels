@@ -29,6 +29,7 @@ pub async fn handle_client(mut stream: TcpStream, addr: SocketAddr) -> Result<()
             server_stream.write(&data).await?;
             println!("client Ready!!!");
             //发送真实请求包同时接受来自server的包
+            //连接来自本地client和远端server 的stream
         }
         Err(err) => {
             println!("handle_client addr: {} err: {}", addr, err);
@@ -65,6 +66,7 @@ pub async fn do_server(
     println!("server Ready!!!");
     println!("start proxy addr: {} addr_dst: {}", addr, addr_dst);
     let mut dst_stream = TcpStream::connect(addr_dst).await?;
+    //连接 dst stream 和来自client 的stream
     Ok(())
 }
 
