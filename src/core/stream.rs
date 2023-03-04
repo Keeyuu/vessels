@@ -96,16 +96,29 @@ fn get_addr(buffer: &[u8]) -> Result<SocketAddr, Error> {
             ))
         }
         0x04 => {
-            //let addr = [0; 16];
-            //for (k, v) in buffer[4..20].iter().enumerate() {
-            //    addr[k] = *v;
-            //}
-            //Ok(IpAddr::V6((Ipv6Addr::from(addr))))
-            Err(Error::new(format!("v4 v6 ?")))
+            let mut addr = [0; 16];
+            let mut port = [0; 2];
+            let mut index = 0;
+            for v in buffer[4..].iter() {
+                match index {
+                    0..=15 => addr[index] = *v,
+                    16..=17 => {
+                        port[index - 4] = *v;
+                    }
+                    _ => break,
+                }
+                index += 1;
+            }
+            Ok(SocketAddr::new(
+                IpAddr::V6(Ipv6Addr::from(addr)),
+                (port[0] as u16) << 8 | port[1] as u16,
+            ))
         }
-        _ => Err(Error::new(format!("v4 v6 ?"))),
+        _ => Err(Error::new(format!(
+            "just support v4 v6  type: {} source: {:?}",
+            buffer[3], buffer
+        ))),
     }
-    // Err()
 }
 
 pub fn start_server(addr: &str) -> Result<(), Error> {
