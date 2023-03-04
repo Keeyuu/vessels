@@ -1,142 +1,59 @@
-use crate::core::error::Error;
+use crate::core::{
+    auth::{auth_client, build_auth},
+    config::settings,
+    error::Error,
+    socks::socks_parser,
+};
 // use crate::core::num::*;
 // use std::collections::HashMap;
 // use std::io::prelude::*;
-use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, Interest};
+use tokio::net::{TcpListener, TcpStream};
 // const ;
 
-fn handle_client(stream: TcpStream) -> Result<(), Error> {
-    let stream = socks_parser(stream)?;
+//本地客户端解析本地的请求
+pub async fn handle_client(mut stream: TcpStream, addr: SocketAddr) -> Result<(), Error> {
+    match socks_parser(&mut stream).await {
+        Ok(data) => {
+            println!("handle_client ok: addr: {} data: {:?}", addr, data);
+            //远程服务器地址
+            let mut server_stream = TcpStream::connect("127.0.0.1:8089").await?;
+            //tls
+            //发送auth包
+            let auth = build_auth(1, String::from("12345678901234567890123"))?;
+            println!("len: {} item: {:?}", auth.len(), auth);
+            server_stream.write(&auth).await?;
+            //发送socks5包
+            server_stream.write(&data).await?;
+            //
+            println!("wait server send data");
+        }
+        Err(err) => {
+            println!("handle_client addr: {} err: {}", addr, err);
+        }
+    }
     Ok(())
 }
 
-fn socks_parser(mut stream: TcpStream) -> Result<TcpStream, Error> {
-    let mut buffer = [0; 256 + 2];
-    // +-----+----------+----------+
-    // | VER | NMETHODS | METHODS  |
-    // +-----+----------+----------+
-    // |  1  |    1     | 1 to 255 |
-    // +-----+----------+----------+
-    let size = stream.read(&mut buffer)?;
-    if size > 256 + 2 {
-        return Err(Error::new(format!("socks_parser: size: {}", size)));
-    }
-    if buffer[0] != 0x05 {
-        return Err(Error::new(format!(
-            "socks_parser: socks type: {}",
-            buffer[0]
-        )));
-    }
-    let nmethods = buffer[1];
-    if nmethods as usize != size - 2 {
-        return Err(Error::new(format!(
-            "socks_parser: socks nmethods: {} has read methods: {}",
-            nmethods,
-            size - 2
-        )));
-    }
-    println!("支持的协议版本: {:?}", &buffer[2..size]);
-    //TODO : 协议校验暂时不校验
-
-    // +-----+--------+
-    // | VER | METHOD |
-    // +-----+--------+
-    // |  1  |   1    |
-    // +-----+--------+
-    if stream.write(&[0x05, 0x00])? != 2 {
-        return Err(Error::new(format!(
-            "socks_parser: write size != 2 size: {}",
-            size
-        )));
-    }
-    let size = stream.read(&mut buffer)?;
-    // +-----+-----+-------+------+----------+----------+
-    // | VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
-    // +-----+-----+-------+------+----------+----------+
-    // |  1  |  1  | X'00' |  1   | Variable |    2     |
-    // +-----+-----+-------+------+----------+----------+
-    if size < 7 {
-        return Err(Error::new(format!(
-            "socks_parser: read size < 7 size: {}",
-            size
-        )));
-    }
-    if buffer[0] != 0x05 || buffer[1] != 0x01 || buffer[2] != 0x00 {
-        return Err(Error::new(format!(
-            "socks_parser: socks version: {} proxy type: {} RSV: {}",
-            buffer[0], buffer[1], buffer[2]
-        )));
-    }
-    let addr = get_addr(&buffer)?;
-    println!("get {:?}", &buffer[..size]);
-    println!("adrr {}", addr);
-    Ok(stream)
-}
-
-fn get_addr(buffer: &[u8]) -> Result<SocketAddr, Error> {
-    match buffer[3] {
-        0x01 => {
-            let mut addr = [0; 4];
-            let mut port = [0; 2];
-            let mut index = 0;
-            for v in buffer[4..].iter() {
-                match index {
-                    0..=3 => addr[index] = *v,
-                    4..=5 => {
-                        port[index - 4] = *v;
-                    }
-                    _ => break,
-                }
-                index += 1;
-            }
-            Ok(SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::from(addr)),
-                (port[0] as u16) << 8 | port[1] as u16,
-            ))
+//服务端接收来自本地的连接,校验通过代理请求,校验失败返回网站,全程tls
+pub async fn handle_server(mut stream: TcpStream, addr: SocketAddr, conf: &settings) {
+    match auth_client(&mut stream, conf).await {
+        Ok(addr_dst) => {
+            println!("handle_server: auth ok addr: {}", addr);
+            let _ = do_server(stream, addr, addr_dst).await;
         }
-        0x04 => {
-            let mut addr = [0; 16];
-            let mut port = [0; 2];
-            let mut index = 0;
-            for v in buffer[4..].iter() {
-                match index {
-                    0..=15 => addr[index] = *v,
-                    16..=17 => {
-                        port[index - 4] = *v;
-                    }
-                    _ => break,
-                }
-                index += 1;
-            }
-            Ok(SocketAddr::new(
-                IpAddr::V6(Ipv6Addr::from(addr)),
-                (port[0] as u16) << 8 | port[1] as u16,
-            ))
+        Err(err) => {
+            println!("handle_server err: {}", err);
         }
-        _ => Err(Error::new(format!(
-            "just support v4 v6  type: {} source: {:?}",
-            buffer[3], buffer
-        ))),
     }
 }
 
-pub fn start_server(addr: &str) -> Result<(), Error> {
-    let listener = TcpListener::bind(addr)?;
-    for stream in listener.incoming() {
-        handle_client(stream?)?;
-    }
+pub async fn do_server(
+    mut stream: TcpStream,
+    addr: SocketAddr,
+    addr_dst: SocketAddr,
+) -> Result<(), Error> {
+    println!("addr: {} addr_dst: {}", addr, addr_dst);
     Ok(())
 }
-// fn read_stream(mut stream: TcpStream) -> Result<(), Error> {
-//     let mut buffer = [0_u8; 5];
-//     let count = stream.read(&mut buffer)?;
-//     if count != 5 {
-//         return Err(Error::new("read_stream: hander len != 5"));
-//     }
-//     let num = u8_to_u32(&buffer[..4]);
-//     let data_type = buffer
-//         .get(5)
-//         .ok_or(Error::new("read_stream: index 5 got none"))?;
-//     Ok(())
-// }
