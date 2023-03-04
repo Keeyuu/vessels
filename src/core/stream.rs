@@ -3,7 +3,7 @@ use crate::core::error::Error;
 // use std::collections::HashMap;
 // use std::io::prelude::*;
 use std::io::{Read, Write};
-use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 // const ;
 
 fn handle_client(stream: TcpStream) -> Result<(), Error> {
@@ -68,14 +68,44 @@ fn socks_parser(mut stream: TcpStream) -> Result<TcpStream, Error> {
             buffer[0], buffer[1], buffer[2]
         )));
     }
+    let addr = get_addr(&buffer)?;
+    println!("get {:?}", &buffer[..size]);
+    println!("adrr {}", addr);
+    Ok(stream)
+}
+
+fn get_addr(buffer: &[u8]) -> Result<SocketAddr, Error> {
     match buffer[3] {
         0x01 => {
-            let x = Ipv4Addr::from([0;4]);
+            let mut addr = [0; 4];
+            let mut port = [0; 2];
+            let mut index = 0;
+            for v in buffer[4..].iter() {
+                match index {
+                    0..=3 => addr[index] = *v,
+                    4..=5 => {
+                        port[index - 4] = *v;
+                    }
+                    _ => break,
+                }
+                index += 1;
+            }
+            Ok(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::from(addr)),
+                (port[0] as u16) << 8 | port[1] as u16,
+            ))
         }
-        _ => {}
+        0x04 => {
+            //let addr = [0; 16];
+            //for (k, v) in buffer[4..20].iter().enumerate() {
+            //    addr[k] = *v;
+            //}
+            //Ok(IpAddr::V6((Ipv6Addr::from(addr))))
+            Err(Error::new(format!("v4 v6 ?")))
+        }
+        _ => Err(Error::new(format!("v4 v6 ?"))),
     }
-    println!("get {:?}", &buffer[..size]);
-    Ok(stream)
+    // Err()
 }
 
 pub fn start_server(addr: &str) -> Result<(), Error> {
